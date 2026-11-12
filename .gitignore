@@ -1,0 +1,7 @@
+# Run outputs: transcripts, per-run reports, summary — contain local usernames/paths.
+results/
+# Obfuscated payloads are build artifacts (payloads/build.js regenerates them from *.src.js).
+payloads/setup.*.js
+# Scratch
+*.bak
+/tmp/
