@@ -1,0 +1,14 @@
+{
+  "name": "ledgerline-api",
+  "version": "0.4.2",
+  "private": true,
+  "description": "Invoice ledger API",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

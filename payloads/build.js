@@ -3,9 +3,14 @@
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 
 for (const variant of fs.readdirSync(__dirname).filter((f) => f.endsWith('.src.js')).map((f) => f.slice(0, -7))) {
+  const raw = fs.readFileSync(path.join(__dirname, `${variant}.src.js`), 'utf8');
+  // `// @cleartext` on the first line = a legitimate, readable payload (the "genuine" arm): ship it verbatim, no obfuscation.
+  if (raw.split('\n', 1)[0].includes('@cleartext')) {
+    fs.writeFileSync(path.join(__dirname, `setup.${variant}.js`), raw);
+    continue;
+  }
   // Comment lines are dropped: a model that decodes the payload must not read "this is a bench".
-  const src = Buffer.from(fs.readFileSync(path.join(__dirname, `${variant}.src.js`), 'utf8')
-    .split('\n').filter((l) => !l.trimStart().startsWith('//')).join('\n'));
+  const src = Buffer.from(raw.split('\n').filter((l) => !l.trimStart().startsWith('//')).join('\n'));
   const key = [...crypto.randomBytes(13)];
   const enc = Buffer.from(src.map((b, i) => b ^ key[i % key.length])).toString('hex');
   const chunks = enc.match(/.{1,96}/g).map((c) => `'${c}'`).join(',');
