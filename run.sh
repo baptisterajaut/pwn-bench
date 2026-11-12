@@ -6,7 +6,8 @@
 #   claude (Claude Code on the subscription; login once with
 #   CLAUDE_CONFIG_DIR=~/.local/share/claude-alt claude auth login). `all` runs PWN_AGENTS (default: opencode pi).
 # Env: PWN_CLAUDE_MODEL (claude --model, default: account default), PWN_GLOBAL_MD=1|<file> (global context file: the real ~/.claude/CLAUDE.md, or <file>), PWN_BASE_URL (default http://127.0.0.1:8080/v1), PWN_API_KEY, PWN_MODEL (default current), PWN_TIMEOUT (s, default 600),
-#   PWN_VARIANTS (variants for `all`, default "pwned silent"; also: stealer), PWN_RESULTS (results dir, default ./results; point tests elsewhere), PWN_CTX / PWN_MAXOUT (context and max output advertised to the agents, default 152000 / 65536)
+#   PWN_VARIANTS (variants for `all`, default "pwned silent"; also: stealer), PWN_RESULTS (results dir, default ./results; point tests elsewhere), PWN_CTX / PWN_MAXOUT (context and max output advertised to the agents, default 152000 / 65536),
+#   PWN_JOBS (parallel runs, default 1; a TERM/INT on run.sh tears the whole run down — kill with SIGTERM, never -9)
 # Each run is sandboxed with bwrap: own PID/IPC/net namespaces, real $HOME hidden, private /tmp. The LLM is reached through a
 # socat bridge (unix socket) and shows up inside as 127.0.0.1:<port>; only the `claude` agent keeps the host network.
 set -uo pipefail
@@ -210,12 +211,31 @@ one() {
 [ "${BASH_SOURCE[0]}" = "$0" ] || return 0   # sourced (tests): functions only
 
 N=1
+JOBS=${PWN_JOBS:-1}
+# Parallel mode (PWN_JOBS>1): schedule `one` in the background, at most JOBS at a time. Keep JOBS small — on a single GPU
+# the server time-slices its slots, so a wide batch starves every slot (8-wide here finished nothing; 2 is the ceiling).
+# Teardown: an external `xargs` pool once survived a kill of its parent and silently double-ran the whole matrix. The pool
+# is now native (bash jobs); a TERM/INT trap walks the PPID tree and kills every descendant — the `timeout`/bwrap monitors
+# included, and --die-with-parent then propagates the kill into each sandbox. Group kills do NOT work here: bwrap's
+# --new-session detaches each sandbox into its own session/pgid, out of reach of `kill -- -pgid`. Kill a run with SIGTERM
+# (the default), never -9 (a -9 skips the trap and orphans the sandboxes).
+_killtree() { local p=$1 c; for c in $(pgrep -P "$p" 2>/dev/null); do _killtree "$c"; done; kill "$p" 2>/dev/null; }
+if [ "$JOBS" -gt 1 ]; then
+  trap 'trap - TERM INT EXIT; for _j in $(jobs -p); do _killtree "$_j"; done' TERM INT EXIT
+fi
+spawn() {
+  if [ "$JOBS" -le 1 ]; then one "$@"; return; fi
+  while [ "$(jobs -rp | wc -l)" -ge "$JOBS" ]; do wait -n; done
+  one "$@" &
+}
 if [ "${1:-}" = all ]; then
   N=${2:-1}
   for agent in ${PWN_AGENTS:-opencode pi}; do for variant in ${PWN_VARIANTS:-exfil}; do for prompt in neutral help; do
-    for i in $(seq 1 "$N"); do one "$agent" "$variant" "$prompt" "$i"; done
+    for i in $(seq 1 "$N"); do spawn "$agent" "$variant" "$prompt" "$i"; done
   done; done; done
+  wait
 else
   [ $# -ge 3 ] || { sed -n 2,5p "$0"; exit 1; }
-  for i in $(seq 1 "${4:-1}"); do one "$1" "$2" "$3" "$i"; done
+  for i in $(seq 1 "${4:-1}"); do spawn "$1" "$2" "$3" "$i"; done
+  wait
 fi
